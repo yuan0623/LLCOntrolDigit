@@ -8,6 +8,8 @@
 #include "digit_forward_kinematics.h"
 #include "digit_json_helper.h"
 #include <math.h>
+#include <iomanip>
+#include <sstream>
 #define DT_MIN 1e-6
 #define DT_MAX 1
 
@@ -34,6 +36,15 @@ static double target_position[] = {
         -0.3633,
 };
 
+std::string serializeTimePoint( const std::chrono::system_clock::time_point& time, const std::string& format)
+{
+    std::time_t tt = std::chrono::system_clock::to_time_t(time);
+    std::tm tm = *std::gmtime(&tt); //GMT (UTC)
+    //std::tm tm = *std::localtime(&tt); //Locale time-zone, usually UTC by default.
+    std::stringstream ss;
+    ss << std::put_time( &tm, format.c_str() );
+    return ss.str();
+}
 
 void writeToCSVfile(std::string name, Eigen::MatrixXd matrix)
 {
@@ -47,14 +58,28 @@ void writeToCSVfile(std::string name, Eigen::MatrixXd matrix)
 
 int main(int argc, char* argv[]) {
     // The publisher address should be changed to the ip address of the robot
-    const char* publisher_address = "10.10.1.1";
+    const char* publisher_address = "127.0.0.1";
 
-    std::string host, motion_file_name, sim_or_hw;
+    std::string host, motion_file_name, sim_or_hw, is_hardware;
     //
 
-    std::string date = "_1122";
+    std::string date = serializeTimePoint(std::chrono::system_clock::now(), "%Y-%m-%d");
     std::string trial_num = "_v1";
-    bool is_sim = false;
+    std::cout<<"Is it on hardware (Y/N)?"<<std::endl;
+    std::cin>>is_hardware;
+    bool is_sim;
+    if (is_hardware=="Y"){
+        is_sim = false;
+    }
+    else if (is_hardware == "N"){
+        is_sim = true;
+    }
+    else
+    {
+        std::cout<<"wrong answer, let's re-run the program!"<<std::endl;
+        return 0;
+    }
+
     if(is_sim == true)
     {
         publisher_address = "127.0.0.1";
@@ -73,7 +98,7 @@ int main(int argc, char* argv[]) {
 
     //inekf::NoiseParams noise_params;
     inekf::RobotState initial_state;
-    //JsonMessageCommunication jsonCom(host,"8080");
+    JsonMessageCommunication jsonCom(host,"8080");
     // Initialize state mean
     Eigen::Matrix3d R0;
     Eigen::Vector3d v0, p0, bg0, ba0;
@@ -126,10 +151,15 @@ int main(int argc, char* argv[]) {
                     -sin(-M_PI/2),0,cos(-M_PI/2);
     std::ofstream motionFile, joint_vecFile, posEstFile,posGTFile;
     motionFile.open ("../recorded_data/digit_walking_"+sim_or_hw+date+".txt",std::ifstream::app);
-    posEstFile.open("../recorded_data/posEstFile.txt",std::ifstream::app);
-    posGTFile.open("../recorded_data/posGTFile.txt",std::ifstream::app);
+    posEstFile.open("../recorded_data/posEstFile"+date+".txt",std::ifstream::app);
+    posGTFile.open("../recorded_data/posGTFile"+date+".txt",std::ifstream::app);
     int loop_count = 0;
-    double t_prev = 0;
+
+
+    double t_prev=0;
+    auto t_prev_hw = std::chrono::high_resolution_clock::now();
+
+
 
     while (loop_count<4000) {
 
@@ -148,7 +178,15 @@ int main(int argc, char* argv[]) {
             auto base_position_ = observation.base.translation;
             auto base_velocity_ = observation.base.linear_velocity;
             auto motor_torque_ = observation.motor.torque;
-            auto t = observation.time;
+            double t;
+            if(is_sim == true){
+                t = observation.time;
+            }
+            else if (is_sim == false){
+                auto TG2 = std::chrono::high_resolution_clock::now();
+                auto ms1 = std::chrono::duration_cast<std::chrono::seconds>(TG2 - t_prev_hw);
+                t = ms1.count();
+            }
             Eigen::Matrix<double,1,20> motor_position = Eigen::Matrix<double,1,20>::Zero();
             Eigen::Matrix<double,1,10> joint_position = Eigen::Matrix<double,1,10>::Zero();
             Eigen::Matrix<double,1,20> motor_torque = Eigen::Matrix<double,1,20>::Zero();
@@ -163,10 +201,10 @@ int main(int argc, char* argv[]) {
             base_position<<base_position_[0],base_position_[1],base_position_[2];
             Eigen::MatrixXd left_foot_pose = leftFoot(joint_position_kin);
             Eigen::MatrixXd right_foot_pose = rightFoot(joint_position_kin);
-            std::vector<std::pair<int,bool> > contacts;
 
-            contacts.push_back(std::pair<int,bool> (0, true));
-            contacts.push_back(std::pair<int,bool> (1, true));
+            std::vector<std::pair<int,bool>> contacts = jsonCom.contact_detection();
+            //contacts.push_back(std::pair<int,bool> (0, true));
+            //contacts.push_back(std::pair<int,bool> (1, true));
 
 
             // New data received
@@ -199,7 +237,8 @@ int main(int argc, char* argv[]) {
                 measured_kinematics.push_back(frame_right);
                 filter.CorrectKinematics(measured_kinematics);
                 std::cout<<"filter update"<<std::endl;
-                observation.base.translation;
+                std::cout<<loop_count<<std::endl;
+                std::cout<<t<<std::endl;
 
                 auto current_state = filter.getState();
                 auto current_pos = current_state.getPosition();

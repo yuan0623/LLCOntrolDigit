@@ -15,16 +15,14 @@
 
 class JsonMessageCommunication{
 public:
-
     JsonMessageCommunication(const std::string host, const std::string port);
-
     std::vector<std::pair<int,bool>> contact_detection();
-    //std::vector<s11n_example::stock> get_stocks();
-    double simulation_rate();
 private:
-    boost::beast::websocket::stream<boost::asio::ip::tcp::socket> *ws_;
     std::string host_;
     std::string port_;
+    boost::asio::io_context ioc;
+    boost::asio::ip::tcp::resolver resolver{ioc};
+    boost::beast::websocket::stream<boost::asio::ip::tcp::socket> ws{ioc};
 };
 
 #endif //DIGIT_KF_DIGIT_JSON_HELPER_H
